@@ -1,0 +1,218 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Royal Threadz | Admin</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 20px; background: #111;
+      color: #f5f0e6; font-family: Arial, sans-serif;
+    }
+    .wrap { max-width: 560px; margin: 25px auto; }
+    h1 { color: #c7f36b; text-align: center; }
+    .card {
+      background: #1d1d1d; border: 1px solid #444;
+      border-radius: 14px; padding: 22px; margin-bottom: 18px;
+    }
+    input, select, button {
+      display: block; width: 100%; padding: 13px;
+      margin: 10px 0; border-radius: 8px;
+      border: 1px solid #555; font-size: 16px;
+    }
+    input, select { background: #292929; color: white; }
+    button {
+      background: #c7f36b; color: #111; border: 0;
+      font-weight: bold; cursor: pointer;
+    }
+    .secondary { background: #333; color: white; }
+    .hint { color: #bbb; font-size: 13px; line-height: 1.5; }
+    #message { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ROYAL THREADZ</h1>
+  <p style="text-align:center">Admin Panel</p>
+
+  <div class="card" id="loginBox">
+    <h2>Admin Login</h2>
+    <form id="loginForm">
+      <input id="email" type="email" placeholder="Admin email" required>
+      <input id="password" type="password" placeholder="Password" required>
+      <button type="submit">Login</button>
+    </form>
+    <p class="hint">শুধু তোমার তৈরি করা Admin account দিয়ে লগইন করো।</p>
+  </div>
+
+  <div class="card hidden" id="adminBox">
+    <h2>Add Product</h2>
+    <form id="productForm">
+      <input id="name" placeholder="Product name" required>
+      <input id="price" type="number" min="0" step="0.01"
+             placeholder="Price (BDT)" required>
+      <label>Product image</label>
+      <input id="image" type="file" accept="image/png,image/jpeg,image/webp" required>
+      <input id="sizes" placeholder="Sizes e.g. M, L, XL, XXL">
+      <select id="stock">
+        <option value="In stock">In stock</option>
+        <option value="Out of stock">Out of stock</option>
+        <option value="Limited stock">Limited stock</option>
+      </select>
+      <button type="submit">Upload & Add Product</button>
+    </form>
+    <button class="secondary" id="logout">Logout</button>
+  </div>
+
+  <div class="card"><p id="message">Ready.</p></div>
+</div>
+
+<script>
+(() => {
+  const SUPABASE_URL = 'https://ekdeswwhfulaaulifnlr.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_KUjmF8YAHkU4kiNyY0OS9g_fO3Jj-yq';
+
+  const message = document.getElementById('message');
+  const loginBox = document.getElementById('loginBox');
+  const adminBox = document.getElementById('adminBox');
+
+  if (!window.supabase) {
+    message.textContent = 'Supabase library load হয়নি। ইন্টারনেট চালু করে পেজ reload করো।';
+    return;
+  }
+
+  const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  let busy = false;
+
+  async function showAdmin() {
+    const { data: { user }, error } = await db.auth.getUser();
+    if (error || !user) {
+      loginBox.classList.remove('hidden');
+      adminBox.classList.add('hidden');
+      return;
+    }
+
+    const { data, error: adminError } = await db
+      .from('admin_users')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (adminError || !data) {
+      message.textContent = 'এই account Admin হিসেবে অনুমোদিত নয়। Supabase-এর admin_users টেবিল ও User ID পরীক্ষা করো।';
+      await db.auth.signOut();
+      loginBox.classList.remove('hidden');
+      adminBox.classList.add('hidden');
+      return;
+    }
+
+    loginBox.classList.add('hidden');
+    adminBox.classList.remove('hidden');
+    message.textContent = 'Logged in. এখন প্রোডাক্ট যোগ করতে পারো।';
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    busy = true;
+    message.textContent = 'Logging in...';
+
+    try {
+      const { error } = await db.auth.signInWithPassword({
+        email: document.getElementById('email').value.trim(),
+        password: document.getElementById('password').value
+      });
+      if (error) throw error;
+      await showAdmin();
+    } catch (err) {
+      message.textContent = 'Login failed: ' + err.message;
+    } finally {
+      busy = false;
+    }
+  });
+
+  document.getElementById('productForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    busy = true;
+    message.textContent = 'প্রোডাক্ট যোগ হচ্ছে...';
+
+    let uploadedPath = null;
+
+    try {
+      const { data: { user }, error: userError } = await db.auth.getUser();
+      if (userError || !user) throw new Error('আবার লগইন করো।');
+
+      const { data: admin, error: adminError } = await db
+        .from('admin_users')
+        .select('user_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (adminError || !admin) throw new Error('Admin permission পাওয়া যায়নি।');
+
+      const file = document.getElementById('image').files[0];
+      if (!file) throw new Error('প্রোডাক্টের ছবি নির্বাচন করো।');
+      if (!['image/jpeg','image/png','image/webp'].includes(file.type))
+        throw new Error('JPG, PNG বা WebP ছবি ব্যবহার করো।');
+      if (file.size > 5 * 1024 * 1024)
+        throw new Error('ছবির সাইজ 5 MB-এর কম হতে হবে।');
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      uploadedPath = user.id + '/' + Date.now() + '-' + safeName;
+
+      const { error: uploadError } = await db.storage
+        .from('product-images')
+        .upload(uploadedPath, file, { upsert: false, contentType: file.type });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = db.storage
+        .from('product-images')
+        .getPublicUrl(uploadedPath);
+
+      const sizes = document.getElementById('sizes').value
+        .split(',').map(s => s.trim()).filter(Boolean);
+
+      const product = {
+        name: document.getElementById('name').value.trim(),
+        price: Number(document.getElementById('price').value),
+        image_url: publicData.publicUrl,
+        sizes,
+        stock: document.getElementById('stock').value
+      };
+
+      if (!product.name) throw new Error('প্রোডাক্টের নাম দাও।');
+      if (!Number.isFinite(product.price) || product.price < 0)
+        throw new Error('সঠিক দাম দাও।');
+
+      const { error: insertError } = await db
+        .from('products').insert(product);
+
+      if (insertError) throw insertError;
+
+      document.getElementById('productForm').reset();
+      message.textContent = 'সফল! প্রোডাক্ট Supabase-এ সেভ হয়েছে। এখন ওয়েবসাইটে দেখাতে storefront connection লাগবে।';
+    } catch (err) {
+      message.textContent = 'Error: ' + (err.message || 'অজানা সমস্যা');
+    } finally {
+      busy = false;
+    }
+  });
+
+  document.getElementById('logout').addEventListener('click', async () => {
+    await db.auth.signOut();
+    loginBox.classList.remove('hidden');
+    adminBox.classList.add('hidden');
+    message.textContent = 'Logged out.';
+  });
+
+  showAdmin();
+})();
+</script>
+</body>
+</html>
